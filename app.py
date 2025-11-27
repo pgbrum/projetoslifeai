@@ -2,165 +2,192 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_absolute_error
+import os
 
-# --- CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="SLife Analytics", page_icon="🎓", layout="wide")
+#CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="SLife Intelligence", page_icon="🏢", layout="wide")
 
-# --- FUNÇÃO DE CARREGAMENTO E LIMPEZA ---
+#CSS PARA CARDS AMARELOS E LETRAS PRETAS
+st.markdown("""
+<style>
+    /* === MUDANÇA PRINCIPAL: CARDS DE MÉTRICAS === */
+    div[data-testid="stMetric"] {
+        background-color: #FFD700 !important; /* Fundo Amarelo Dourado */
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0px 4px 6px rgba(0,0,0,0.3); /* Sombra para destacar */
+        border: 1px solid #E6C200;
+    }
+
+    /* Forçar TODAS as letras dentro do card para ficarem PRETAS */
+    div[data-testid="stMetric"] label,
+    div[data-testid="stMetric"] div,
+    div[data-testid="stMetric"] p,
+    div[data-testid="stMetric"] span {
+        color: #000000 !important;
+    }
+    
+    /* Título da Métrica (Ex: Receita Mensal) - Preto Negrito */
+    div[data-testid="stMetricLabel"] p {
+        font-weight: bold !important;
+        font-size: 1rem !important;
+    }
+    
+    /* Valor da Métrica (Número Grande) - Preto Extra Negrito */
+    div[data-testid="stMetricValue"] div {
+        font-weight: 900 !important;
+    }
+    
+    /* Setinhas de porcentagem (Delta) - Pretas */
+    div[data-testid="stMetricDelta"] svg {
+        fill: #000000 !important;
+    }
+
+    /* === BOTÕES (Mantendo o padrão amarelo) === */
+    div.stButton > button {
+        background-color: #FFD700 !important;
+        color: black !important;
+        font-weight: bold !important;
+        border: none;
+        border-radius: 8px;
+        padding: 0.6rem 1.2rem;
+        transition: 0.3s;
+    }
+    div.stButton > button:hover {
+        background-color: #FFC107 !important;
+        transform: scale(1.02);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+#CARREGAMENTO DE DADOS
 @st.cache_data
-def carregar_dados_imoveis():
+def carregar_dados():
     try:
-        # Lê o CSV usando separador de ponto e vírgula (padrão brasileiro)
-        df = pd.read_csv('slife_imoveis.csv', sep=';')
+        if not os.path.exists('slife_imoveis.csv'):
+            return None, None, None, None
+            
+        df_imoveis = pd.read_csv('slife_imoveis.csv', sep=';')
         
-        # --- LIMPEZA DE DADOS ---
-        # 1. Converter colunas de dinheiro e distância (texto "1.200,00" para número 1200.00)
         cols_numericas = ['valor_aluguel', 'distancia_universidade_km', 'nota_avaliacao']
         for col in cols_numericas:
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.replace(',', '.').astype(float)
+            if df_imoveis[col].dtype == 'object':
+                df_imoveis[col] = df_imoveis[col].astype(str).str.replace(',', '.').astype(float)
 
-        # 2. Converter booleanos (True/False) para 1/0
         cols_bool = ['tem_mobilia', 'tem_internet', 'tem_lavanderia']
         for col in cols_bool:
-            df[col] = df[col].astype(int)
+            df_imoveis[col] = df_imoveis[col].astype(int)
             
-        # 3. Mapear o "Tipo" para números (para a IA entender)
-        # Vamos criar uma coluna nova 'tipo_cod'
-        tipos = df['tipo'].unique()
+        tipos = df_imoveis['tipo'].unique()
         mapa_tipos = {tipo: i for i, tipo in enumerate(tipos)}
-        df['tipo_cod'] = df['tipo'].map(mapa_tipos)
+        df_imoveis['tipo_cod'] = df_imoveis['tipo'].map(mapa_tipos)
         
-        return df, mapa_tipos
+        df_contratos = None
+        df_avaliacoes = None
+        
+        if os.path.exists('slife_contratos.csv'):
+            df_contratos = pd.read_csv('slife_contratos.csv', sep=';')
+            for col in ['receita_total', 'taxa_ocupacao']:
+                if col in df_contratos.columns and df_contratos[col].dtype == 'object':
+                    df_contratos[col] = df_contratos[col].astype(str).str.replace(',', '.').astype(float)
+                    
+        if os.path.exists('slife_avaliacoes.csv'):
+            df_avaliacoes = pd.read_csv('slife_avaliacoes.csv', sep=';')
+            for c in ['nota_limpeza', 'nota_localizacao', 'nota_atendimento', 'nota_custo_beneficio']:
+                if c in df_avaliacoes.columns and df_avaliacoes[c].dtype == 'object':
+                     df_avaliacoes[c] = df_avaliacoes[c].astype(str).str.replace(',', '.').astype(float)
+
+        return df_imoveis, mapa_tipos, df_contratos, df_avaliacoes
         
     except Exception as e:
-        st.error(f"Erro ao ler 'slife_imoveis.csv': {e}")
-        return None, None
+        st.error(f"Erro ao carregar dados: {e}")
+        return None, None, None, None
 
-@st.cache_data
-def carregar_kpis():
-    # Carrega os outros arquivos para os gráficos de dashboard
-    try:
-        df_contratos = pd.read_csv('slife_contratos.csv', sep=';')
-        df_avaliacoes = pd.read_csv('slife_avaliacoes.csv', sep=';')
-        
-        # Limpeza básica de vírgulas
-        cols_dinheiro = ['receita_total', 'valor_medio_republica', 'valor_medio_kitnet']
-        for col in cols_dinheiro:
-            if col in df_contratos.columns and df_contratos[col].dtype == 'object':
-                df_contratos[col] = df_contratos[col].astype(str).str.replace(',', '.').astype(float)
-                
-        return df_contratos, df_avaliacoes
-    except:
-        return None, None
+df_imoveis, mapa_tipos, df_contratos, df_avaliacoes = carregar_dados()
 
-# Carrega tudo
-df_imoveis, mapa_tipos = carregar_dados_imoveis()
-df_contratos, df_avaliacoes = carregar_kpis()
+#HEADER
+col_logo, col_titulo = st.columns([1, 6])
 
-# --- INTERFACE ---
-st.title("🎓 SLife - Inteligência Imobiliária")
-st.markdown("Solução integrada para precificação inteligente e análise de mercado.")
+with col_logo:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=100)
+    elif os.path.exists("logo.jpg"):
+        st.image("logo.jpg", width=100)
+    else:
+        st.markdown("# 🏛️")
 
-# Abas para separar as funcionalidades
-tab1, tab2 = st.tabs(["🏠 Calculadora de Aluguel (IA)", "📊 Dashboard de Mercado"])
+with col_titulo:
+    st.title("SLife Intelligence")
+    st.markdown("##### Plataforma de Gestão e Precificação Inteligente")
 
-# === ABA 1: A CALCULADORA (IA) ===
+st.markdown("---")
+
+#ABAS E CONTEÚDO
+tab1, tab2 = st.tabs(["🏠 SIMULADOR DE PREÇO", "📊 DASHBOARD EXECUTIVO"])
+
+# ABA 1: CALCULADORA
 with tab1:
     if df_imoveis is not None:
-        # Treinamento do Modelo
-        # Features: Tipo, Quartos, Vagas, Distancia, Mobilia, Internet, Lavanderia
         X = df_imoveis[['tipo_cod', 'quartos', 'vagas_totais', 'distancia_universidade_km', 
                         'tem_mobilia', 'tem_internet', 'tem_lavanderia']]
         y = df_imoveis['valor_aluguel']
-        
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
-        
-        # Layout
-        col_esq, col_dir = st.columns([1, 2])
-        
-        with col_esq:
-            st.subheader("Simular Imóvel")
-            
-            # Inputs baseados nas colunas reais
-            # Invertemos o mapa para usar no selectbox
-            mapa_invertido = {v: k for k, v in mapa_tipos.items()}
-            tipo_selecionado = st.selectbox("Tipo do Imóvel", list(mapa_tipos.keys()))
-            
-            quartos = st.slider("Quartos", 1, 5, 1)
-            vagas = st.number_input("Vagas de Garagem", 0, 5, 0)
-            distancia = st.number_input("Distância da Faculdade (km)", 0.1, 15.0, 1.5)
-            
-            st.write("Comodidades:")
-            mobilia = st.checkbox("Mobiliado", value=True)
-            internet = st.checkbox("Internet Inclusa", value=True)
-            lavanderia = st.checkbox("Lavanderia", value=False)
-            
-            btn_calcular = st.button("Calcular Preço Justo", type="primary")
-            
-        with col_dir:
-            if btn_calcular:
-                # Preparar entrada
-                entrada = pd.DataFrame({
-                    'tipo_cod': [mapa_tipos[tipo_selecionado]],
-                    'quartos': [quartos],
-                    'vagas_totais': [vagas],
-                    'distancia_universidade_km': [distancia],
-                    'tem_mobilia': [1 if mobilia else 0],
-                    'tem_internet': [1 if internet else 0],
-                    'tem_lavanderia': [1 if lavanderia else 0]
-                })
-                
-                preco_predito = model.predict(entrada)[0]
-                
-                st.success("Cálculo Finalizado!")
-                st.metric("Valor Sugerido de Aluguel", f"R$ {preco_predito:.2f}")
-                
-                # Gráfico comparativo
-                st.write("#### Comparativo: Preço vs Distância")
-                st.caption("Como seu imóvel se compara com outros do mesmo tipo (Pontos vermelhos)")
-                
-                # Filtra imóveis do mesmo tipo para comparar
-                df_filtro = df_imoveis[df_imoveis['tipo'] == tipo_selecionado]
-                st.scatter_chart(df_filtro, x='distancia_universidade_km', y='valor_aluguel', color='#FF4B4B')
-    else:
-        st.warning("Erro ao carregar dados de imóveis.")
+        model.fit(X, y)
 
-# === ABA 2: DASHBOARD (EXTRAS) ===
-with tab2:
-    st.header("Visão Geral da Empresa")
-    if df_contratos is not None and df_avaliacoes is not None:
-        # Métricas Gerais (Pega o último mês disponível)
-        ultimo_mes = df_contratos.iloc[-1]
+        st.subheader("Simulador de Aluguel (IA)")
+        st.info("Preencha os dados abaixo para estimar o valor.")
         
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Receita Total (Mês)", f"R$ {ultimo_mes['receita_total']:,.2f}")
-        kpi2.metric("Contratos Ativos", int(ultimo_mes['contratos_ativos']))
-        kpi3.metric("Taxa de Ocupação", f"{ultimo_mes['taxa_ocupacao']}%")
-        kpi4.metric("Novos Contratos", int(ultimo_mes['novos_contratos']))
-        
-        st.divider()
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Evolução da Receita")
-            st.line_chart(df_contratos, x='mes', y='receita_total')
+        with st.container():
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                tipo = st.selectbox("Tipo", list(mapa_tipos.keys()))
+                dist = st.number_input("Distância (km)", 0.1, 15.0, 1.5)
+            with c2:
+                quartos = st.slider("Quartos", 1, 5, 1)
+                vagas = st.slider("Vagas", 0, 5, 0)
+            with c3:
+                st.write("Inclusos:")
+                mob = st.checkbox("Mobiliado", True)
+                net = st.checkbox("Internet", True)
+                lav = st.checkbox("Lavanderia", False)
             
-        with c2:
-            st.subheader("Qualidade (Avaliações)")
-            # Pega a média das notas do último mês disponível em avaliações
-            notas_cols = ['nota_limpeza', 'nota_localizacao', 'nota_atendimento', 'nota_custo_beneficio']
-            # Tratamento rápido para garantir que são floats
-            df_avaliacoes_float = df_avaliacoes.copy()
-            for c in notas_cols:
-                df_avaliacoes_float[c] = df_avaliacoes_float[c].astype(str).str.replace(',', '.').astype(float)
+            st.write("")
+            if st.button("CALCULAR PREÇO ➔", type="primary", use_container_width=True):
+                entrada = pd.DataFrame([[mapa_tipos[tipo], quartos, vagas, dist, int(mob), int(net), int(lav)]], 
+                                     columns=X.columns)
+                preco = model.predict(entrada)[0]
                 
-            notas_ultimas = df_avaliacoes_float.iloc[-1][notas_cols]
-            st.bar_chart(notas_ultimas)
+                st.markdown("---")
+                rc1, rc2 = st.columns([1, 2])
+                with rc1:
+                    st.success("Preço Calculado!")
+                    st.metric("Valor Sugerido", f"R$ {preco:,.2f}")
+                with rc2:
+                    st.write("**Comparação de Mercado**")
+                    filtro = df_imoveis[df_imoveis['tipo'] == tipo]
+                    st.scatter_chart(filtro, x='distancia_universidade_km', y='valor_aluguel', color='#FFD700')
+
+# ABA 2: DASHBOARD
+with tab2:
+    if df_contratos is not None:
+        st.subheader("Indicadores de Performance")
+        ult = df_contratos.iloc[-1]
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Receita (Mês)", f"R$ {ult['receita_total']:,.2f}")
+        m2.metric("Ocupação", f"{ult['taxa_ocupacao']}%")
+        m3.metric("Contratos Ativos", int(ult['contratos_ativos']))
+        m4.metric("Novos Clientes", int(ult['novos_contratos']), "+15")
+        
+        st.write("")
+        g1, g2 = st.columns(2)
+        
+        with g1:
+            st.markdown("**Evolução da Receita**")
+            st.line_chart(df_contratos, x='mes', y='receita_total', color='#FFD700')
             
-    else:
-        st.info("Arquivos de contratos ou avaliações não encontrados para gerar dashboard.")
+        with g2:
+            st.markdown("**Qualidade (Avaliações)**")
+            if df_avaliacoes is not None:
+                notas = df_avaliacoes.iloc[-1][['nota_limpeza', 'nota_localizacao', 'nota_atendimento']]
+                st.bar_chart(notas, color='#FFD700')
